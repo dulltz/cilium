@@ -1019,11 +1019,6 @@ func initEnv(cmd *cobra.Command) {
 		log.WithField(logfields.DatapathMode, option.Config.DatapathMode).Fatal("Invalid datapath mode")
 	}
 
-	if option.Config.EnableIPSec && option.Config.Tunnel == option.TunnelDisabled {
-		log.WithField(logfields.Tunnel, option.Config.Tunnel).
-			Fatal("Currently ipsec only works with tunneling enabled.")
-	}
-
 	// If device has been specified, use it to derive better default
 	// allocation prefixes
 	if option.Config.Device != "undefined" {
