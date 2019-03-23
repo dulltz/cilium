@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Authors of Cilium
+// Copyright 2016-2019 Authors of Cilium
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -359,6 +359,28 @@ func (c *consulClient) Watch(w *Watcher) {
 			return
 		}
 	}
+}
+
+// Connected closes the returned channel when the etcd client is connected.
+func (c *consulClient) Connected() <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		for {
+			// TODO find out if there's a better way to do this for consul
+			_, _, err := c.Session().Info(c.lease, &consulAPI.QueryOptions{})
+			if err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		close(ch)
+	}()
+	return ch
+}
+
+// Disconnected is not implement in consulClient
+func (c *consulClient) Disconnected() <-chan struct{} {
+	panic("Disconnected() not implemented for consul")
 }
 
 func (c *consulClient) Status() (string, error) {
