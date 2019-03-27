@@ -187,10 +187,10 @@ func mergeL4IngressPort(ctx *SearchContext, endpoints []api.EndpointSelector, en
 }
 
 func mergeL4Ingress(ctx *SearchContext, rule api.IngressRule, ruleLabels labels.LabelArray, resMap L4PolicyMap) (int, error) {
-	if len(rule.ToPorts) == 0 {
+	/*if len(rule.ToPorts) == 0 {
 		ctx.PolicyTrace("    No L4 %s rules\n", trafficdirection.Ingress)
 		return 0, nil
-	}
+	}*/
 
 	fromEndpoints := rule.GetSourceEndpointSelectors()
 	found := 0
@@ -216,6 +216,21 @@ func mergeL4Ingress(ctx *SearchContext, rule api.IngressRule, ruleLabels labels.
 			endpointsWithL3Override = append(endpointsWithL3Override, api.ReservedEndpointSelectors[labels.IDNameWorld])
 		}
 	}
+
+	var (
+		cnt int
+		err error
+	)
+
+	// L3-only rule
+	if len(rule.ToPorts) == 0 {
+		cnt, err = mergeL4IngressPort(ctx, fromEndpoints, endpointsWithL3Override, api.PortRule{}, api.PortProtocol{Port: "0", Protocol: api.ProtoAny}, api.ProtoAny, ruleLabels, resMap)
+		if err != nil {
+			return found, err
+		}
+	}
+
+	found += cnt
 
 	for _, r := range rule.ToPorts {
 		ctx.PolicyTrace("    Allows %s port %v from endpoints %v\n", trafficdirection.Ingress, r.Ports, fromEndpoints)
@@ -532,13 +547,28 @@ func (r *rule) canReachEgress(ctx *SearchContext, state *traceState) api.Decisio
 }
 
 func mergeL4Egress(ctx *SearchContext, rule api.EgressRule, ruleLabels labels.LabelArray, resMap L4PolicyMap) (int, error) {
-	if len(rule.ToPorts) == 0 {
+	/*if len(rule.ToPorts) == 0 {
 		ctx.PolicyTrace("    No L4 %s rules\n", trafficdirection.Egress)
 		return 0, nil
-	}
+	}*/
 
 	toEndpoints := rule.GetDestinationEndpointSelectors()
 	found := 0
+
+	var (
+		cnt int
+		err error
+	)
+
+	// L3-only rule
+	if len(rule.ToPorts) == 0 {
+		cnt, err = mergeL4EgressPort(ctx, toEndpoints, api.PortRule{}, api.PortProtocol{Port: "0", Protocol: api.ProtoAny}, api.ProtoAny, ruleLabels, resMap)
+		if err != nil {
+			return found, err
+		}
+	}
+
+	found += cnt
 
 	for _, r := range rule.ToPorts {
 		ctx.PolicyTrace("    Allows %s port %v to endpoints %v\n", trafficdirection.Egress, r.Ports, toEndpoints)

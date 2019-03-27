@@ -170,6 +170,7 @@ func (l4 *L4Filter) ToKeys(direction trafficdirection.TrafficDirection, identity
 					Nexthdr:          proto,
 					TrafficDirection: direction.Uint8(),
 				}
+				fmt.Printf("Adding Key: %v\n", keyToAdd)
 				keysToAdd = append(keysToAdd, keyToAdd)
 			}
 		}
