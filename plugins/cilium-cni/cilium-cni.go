@@ -405,6 +405,116 @@ func setUPWithFlannel(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsS
 	return nil
 }
 
+func setUPWithCoil(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsSpec, n *netConf, cniVer string, c *client.Client) (err error) {
+	err = cniVersion.ParsePrevResult(&n.NetConf)
+	if err != nil {
+		return fmt.Errorf("unable to understand network config: %s", err)
+	}
+	r, err := cniTypesVer.GetResult(n.PrevResult)
+	if err != nil {
+		return fmt.Errorf("unable to get previous network result: %s", err)
+	}
+	// We only care about the veth interface that is on the host side
+	// and cni0. Interfaces should be similar as:
+	//       "interfaces":[
+	//         {
+	//            "name":"cni0",
+	//            "mac":"0a:58:0a:f4:00:01"
+	//         },
+	//         {
+	//            "name":"veth15707e9b",
+	//            "mac":"4e:6d:93:35:6b:45"
+	//         },
+	//         {
+	//            "name":"eth0",
+	//            "mac":"0a:58:0a:f4:00:06",
+	//            "sandbox":"/proc/15259/ns/net"
+	//         }
+	//       ]
+
+	defer func() {
+		if err != nil {
+			logger.WithError(err).
+				WithFields(logrus.Fields{"cni-pre-result": n.PrevResult.String()}).
+				Errorf("Unable to create endpoint")
+		}
+	}()
+	var (
+		hostMac, vethHostName, vethLXCMac, vethIP string
+		vethHostIdx, vethSliceIdx                 int
+	)
+	for i, iDev := range r.Interfaces {
+		// We only care about the veth interface mac address on the container side.
+		if iDev.Sandbox != "" {
+			vethLXCMac = iDev.Mac
+			vethSliceIdx = i
+			continue
+		}
+
+		l, err := netlink.LinkByName(iDev.Name)
+		if err != nil {
+			continue
+		}
+		vethHostName = iDev.Name
+		vethHostIdx = l.Attrs().Index
+		// likely to be cni0
+		hostMac = iDev.Mac
+	}
+	for _, ipCfg := range r.IPs {
+		if ipCfg.Interface != nil && *ipCfg.Interface == vethSliceIdx {
+			vethIP = ipCfg.Address.IP.String()
+			break
+		}
+	}
+
+	log.WithFields(logrus.Fields{
+		"hostMac":      hostMac,
+		"vethHostName": vethHostName,
+		"vethLXCMac":   vethLXCMac,
+		"vethIP":       vethIP,
+		"vethHostIdx":  vethHostIdx,
+	}).Info("debugSetupWithCoil")
+
+	switch {
+	case hostMac == "":
+		return errors.New("unable to determine MAC address of bridge interface (cni0)")
+	case vethHostName == "":
+		return errors.New("unable to determine name of veth pair on the host side")
+	case vethLXCMac == "":
+		return errors.New("unable to determine MAC address of veth pair on the container side")
+	case vethIP == "":
+		return errors.New("unable to determine IP address of the container")
+	case vethHostIdx == 0:
+		return errors.New("unable to determine index interface of veth pair on the host side")
+	}
+
+	ep := &models.EndpointChangeRequest{
+		Addressing: &models.AddressPair{
+			IPV4: vethIP,
+		},
+		ContainerID:       args.ContainerID,
+		State:             models.EndpointStateWaitingForIdentity,
+		HostMac:           hostMac,
+		InterfaceIndex:    int64(vethHostIdx),
+		Mac:               vethLXCMac,
+		InterfaceName:     vethHostName,
+		K8sPodName:        string(cniArgs.K8S_POD_NAME),
+		K8sNamespace:      string(cniArgs.K8S_POD_NAMESPACE),
+		SyncBuildEndpoint: true,
+	}
+
+	err = c.EndpointCreate(ep)
+	if err != nil {
+		logger.WithError(err).WithFields(logrus.Fields{
+			logfields.ContainerID: ep.ContainerID}).Warn("Unable to create endpoint")
+		return fmt.Errorf("unable to create endpoint: %s", err)
+	}
+
+	logger.WithFields(logrus.Fields{
+		logfields.ContainerID: ep.ContainerID}).Debug("Endpoint successfully created")
+	return nil
+}
+
 func cmdAdd(args *skel.CmdArgs) (err error) {
 	logger := log.WithField("eventUUID", uuid.NewUUID())
 	logger.WithField("args", args).Debug("Processing CNI ADD request")
@@ -424,10 +534,20 @@ func cmdAdd(args *skel.CmdArgs) (err error) {
 		return fmt.Errorf("unable to connect to Cilium daemon: %s", err)
 	}
 
+	log.WithFields(logrus.Fields{
+		"prevresult": n.NetConf.RawPrevResult,
+		"name":       n.Name,
+	}).Info("debug")
 	if len(n.NetConf.RawPrevResult) != 0 {
 		switch n.Name {
 		case "cbr0":
 			err := setUPWithFlannel(logger, args, cniArgs, n, cniVer, c)
+			if err != nil {
+				return err
+			}
+			return cniTypes.PrintResult(&cniTypesVer.Result{}, cniVer)
+		case "coilium":
+			err := setUPWithCoil(logger, args, cniArgs, n, cniVer, c)
 			if err != nil {
 				return err
 			}
