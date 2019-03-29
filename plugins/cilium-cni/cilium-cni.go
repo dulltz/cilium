@@ -405,14 +405,14 @@ func setUPWithFlannel(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsS
 	return nil
 }
 
-func setUPWithCoil(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsSpec, n *netConf, cniVer string, c *client.Client) (err error) {
+func setUPWithCoil(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsSpec, n *netConf, cniVer string, c *client.Client) (r *cniTypesVer.Result, err error) {
 	err = cniVersion.ParsePrevResult(&n.NetConf)
 	if err != nil {
-		return fmt.Errorf("unable to understand network config: %s", err)
+		return nil, fmt.Errorf("unable to understand network config: %s", err)
 	}
-	r, err := cniTypesVer.GetResult(n.PrevResult)
+	r, err = cniTypesVer.GetResult(n.PrevResult)
 	if err != nil {
-		return fmt.Errorf("unable to get previous network result: %s", err)
+		return nil, fmt.Errorf("unable to get previous network result: %s", err)
 	}
 	// We only care about the veth interface that is on the host side
 	// and cni0. Interfaces should be similar as:
@@ -477,15 +477,15 @@ func setUPWithCoil(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsSpec
 
 	switch {
 	case hostMac == "":
-		return errors.New("unable to determine MAC address of bridge interface (cni0)")
+		return nil, errors.New("unable to determine MAC address of bridge interface (cni0)")
 	case vethHostName == "":
-		return errors.New("unable to determine name of veth pair on the host side")
+		return nil, errors.New("unable to determine name of veth pair on the host side")
 	case vethLXCMac == "":
-		return errors.New("unable to determine MAC address of veth pair on the container side")
+		return nil, errors.New("unable to determine MAC address of veth pair on the container side")
 	case vethIP == "":
-		return errors.New("unable to determine IP address of the container")
+		return nil, errors.New("unable to determine IP address of the container")
 	case vethHostIdx == 0:
-		return errors.New("unable to determine index interface of veth pair on the host side")
+		return nil, errors.New("unable to determine index interface of veth pair on the host side")
 	}
 
 	ep := &models.EndpointChangeRequest{
@@ -507,12 +507,12 @@ func setUPWithCoil(logger *logrus.Entry, args *skel.CmdArgs, cniArgs cniArgsSpec
 	if err != nil {
 		logger.WithError(err).WithFields(logrus.Fields{
 			logfields.ContainerID: ep.ContainerID}).Warn("Unable to create endpoint")
-		return fmt.Errorf("unable to create endpoint: %s", err)
+		return nil, fmt.Errorf("unable to create endpoint: %s", err)
 	}
 
 	logger.WithFields(logrus.Fields{
 		logfields.ContainerID: ep.ContainerID}).Debug("Endpoint successfully created")
-	return nil
+	return r, nil
 }
 
 func cmdAdd(args *skel.CmdArgs) (err error) {
@@ -547,11 +547,11 @@ func cmdAdd(args *skel.CmdArgs) (err error) {
 			}
 			return cniTypes.PrintResult(&cniTypesVer.Result{}, cniVer)
 		case "coilium":
-			err := setUPWithCoil(logger, args, cniArgs, n, cniVer, c)
+			r, err := setUPWithCoil(logger, args, cniArgs, n, cniVer, c)
 			if err != nil {
 				return err
 			}
-			return cniTypes.PrintResult(&cniTypesVer.Result{}, cniVer)
+			return cniTypes.PrintResult(r, cniVer)
 		default:
 		}
 	}
